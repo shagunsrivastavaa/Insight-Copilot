@@ -1,0 +1,62 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+
+# Conda and virtual environments
+.venv/
+venv/
+env/
+ENV/
+.conda/
+conda-env/
+envs/
+
+# Local environment variables and credentials
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+secrets.toml
+secrets.*
+*.secret
+*.secrets
+*_credentials.*
+credentials.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+
+# Test, coverage, and temporary artifacts
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+pytestdebug.log
+test-results/
+test-output/
+*.tmp
+*.temp
+*.bak
+
+# Local package/build output
+build/
+dist/
+*.egg-info/
