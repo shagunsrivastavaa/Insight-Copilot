@@ -1,131 +1,149 @@
 # Insight Copilot
 
-Insight Copilot is a Streamlit chat app for asking supported questions about the Olist e-commerce dataset. A LangGraph workflow creates a short plan, routes the question with deterministic keyword rules, runs the relevant Pandas analysis tool or tools, and synthesizes a user-facing answer. The current implementation does not use an LLM or external API.
+Insight Copilot is a Streamlit app I built to explore the Brazilian E-Commerce (Olist) dataset. It lets users ask questions about product and category sales, monthly order trends, and delivery performance.
 
-## Capabilities
+I used Pandas for data analysis and LangGraph to manage the workflow. The app uses predefined keyword rules to decide which tool to run, so it doesn't require an LLM or an API key.
 
-- Rank products or product categories by order-item sales value.
-- Count distinct orders by purchase month, optionally limited to an inclusive month range.
-- Calculate delivery duration and late-delivery performance.
-- Show a plan, routing explanation, selected tools, structured tool results, and errors in the Streamlit conversation.
-- Keep chat messages in the active Streamlit session; history is not persisted between sessions.
+**Live App:** https://insight-copilot-hytpdjwg8pw8ktepjgzyhr.streamlit.app/
 
-## Architecture and workflow
+## What it can do
 
-`app.py` accepts a chat question and calls `run_query(query)` from `agent/graph.py`. The compiled LangGraph uses `InsightCopilotState` from `agent/state.py` to pass data between nodes:
+- Find the top products and categories by item sales value.
+- Show monthly order counts for a given date range.
+- Calculate average delivery time and late-delivery percentage.
+- Show which tools were selected and how a query was handled.
+- Handle unsupported questions and tool errors without running unrelated tools.
+
+## How it works
+
+When a user enters a question, the app creates a plan and checks which tool can handle it. LangGraph manages the workflow, from planning and routing to tool execution and generating the final answer.
+
+The app has three tools:
+
+- **Data tool:** Finds top products or categories based on item sales value.
+- **Trend tool:** Counts distinct orders by purchase month.
+- **Delivery tool:** Calculates average delivery time and late-delivery percentage.
+
+The router uses keyword-based rules to select the relevant tool. If it can't recognize a supported question, it skips tool execution and returns a message. When multiple tools are selected, a failure in one tool doesn't prevent successful results from the others from being used.
+
+The **Plan & execution trace** section in the app shows the plan, selected tools, and routing details.
+
+### Architecture
 
 ```mermaid
 flowchart TD
-    U[User query] --> P[plan<br/>User-visible plan]
-    P --> R[route<br/>Deterministic keyword routing]
-    R --> D{Routing error exists<br/>or no tools selected?}
-    D -- Yes: skip tool execution --> S[synthesize]
-    D -- No: error is empty and tools are selected --> E[execute_tools<br/>Run selected tools]
-    E --> S
-    S --> F[Final response]
+    A[User Question] --> B[Plan]
+    B --> C[Route Query]
+    C --> D{Routing Error or No Tools?}
+    D -- Yes --> F[Synthesize Answer]
+    D -- No --> E[Execute Selected Tools]
+    E --> F
+    F --> G[Display Response]
 ```
 
-1. **`plan` (`plan_node`)** creates a brief, user-visible plan. It does not select or execute tools.
-2. **`route` (`route_node`)** calls `route_query` in `agent/router.py`. Case-insensitive keyword and pattern rules select the supported tool names and arguments, and add concise routing explanations.
-3. **Conditional execution** checks the routing state. If `error` is non-empty or no tools were selected, the graph skips `execute_tools` and goes directly to `synthesize`. Otherwise, it runs `execute_tools`.
-4. **`execute_tools` (`execute_tools_node`)** invokes only the selected tool functions and stores each structured result in `tool_results`. If a tool fails, its error is stored while successful results from other selected tools are retained.
-5. **`synthesize` (`synthesize_node`)** deterministically formats the tool results as an analyst-style answer. It reports routing errors, partial failures, and the applicable metric definitions; it does not call an LLM.
+## Understanding the metrics
 
-The graph then reaches `END`. `run_query` accepts a non-empty string and returns the graph's resulting state dictionary.
+A few details are important when interpreting the results:
 
-## Analysis tools
-
-All tool data paths are resolved relative to the project root, under `data/olist/`.
-
-### Product and category rankings
-
-Module: `tools/data_tool.py`  
-Function: `query_data(operation: str, top_n: int = 10) -> dict`
-
-- `operation` must be `"top_categories"` or `"top_products"`; `top_n` must be a positive integer. The router supplies `top_n=5` and chooses the operation from the question.
-- Joins order items to products on `product_id`, then joins English translations on `product_category_name`. Left joins retain items without a matching product or translation.
-- Returns `operation`, `metric`, and `records`. Category records contain `category` and `item_sales_value`; product records contain `product_id`, `category`, and `item_sales_value`.
-- **Item sales value** is the sum of order-item `price`. `freight_value` is excluded. This is not profit or net revenue. Missing categories are labeled `Uncategorized`; missing product IDs use `unknown_product`.
-
-### Monthly order trends
-
-Module: `tools/trend_tool.py`  
-Function: `query_monthly_orders(start_month: Optional[str] = None, end_month: Optional[str] = None) -> dict`
-
-- Optional bounds use `YYYY-MM` format and are inclusive. For explicit numeric year-month ranges such as `from 2017-1 to 2017-03`, the router rejects malformed month tokens and reversed ranges before tool execution. The tool itself also validates its arguments.
-- Returns `operation`, `metric`, and `records`, where each record has `month` and `order_count`.
-- Counts distinct `order_id` values by calendar month of `order_purchase_timestamp`. All statuses are included, including canceled and unavailable. Rows with missing order IDs or invalid/missing purchase timestamps are omitted. Months without rows are not added with zero counts.
-
-### Delivery performance
-
-Module: `tools/delivery_tool.py`  
-Function: `query_delivery_performance() -> dict`
-
-- Takes no arguments and returns `operation`, `metric_definitions`, and `results`.
-- `total_distinct_orders` counts non-missing order IDs across all statuses.
-- `average_delivery_duration_days` is the mean elapsed time from purchase to actual customer delivery. Its denominator is delivered orders with valid purchase and delivery timestamps.
-- `late_delivery_percentage` is late delivered orders divided by delivered orders with valid actual and estimated delivery timestamps. Delivery is late only when the actual timestamp is strictly after the estimate; arriving on the estimated date is on time. Undelivered orders are not classified as late.
-
-## Dataset files
-
-Place the Olist CSVs in `data/olist/`. The expected set is:
-
-```text
-data/olist/olist_customers_dataset.csv
-data/olist/olist_geolocation_dataset.csv
-data/olist/olist_order_items_dataset.csv
-data/olist/olist_order_payments_dataset.csv
-data/olist/olist_order_reviews_dataset.csv
-data/olist/olist_orders_dataset.csv
-data/olist/olist_products_dataset.csv
-data/olist/olist_sellers_dataset.csv
-data/olist/product_category_name_translation.csv
-```
-
-The current tools use `olist_order_items_dataset.csv`, `olist_products_dataset.csv`, `product_category_name_translation.csv`, and `olist_orders_dataset.csv`. `scripts/inspect_data.py` inspects all nine expected files.
-
-## Windows setup (Conda)
-
-Open Anaconda Prompt or a Conda-enabled PowerShell terminal, navigate to the project root, and run:
-
-```powershell
-conda create -n insight-copilot python=3.11 -y
-conda activate insight-copilot
-python -m pip install -r requirements.txt
-```
-
-`requirements.txt` pins the project package versions: Pandas 3.0.6, Streamlit 1.65.0, and LangGraph 1.2.14.
-
-## Launch the app
-
-From the project root with the Conda environment activated:
-
-```powershell
-streamlit run app.py
-```
+- **Item sales value:** The sum of order-item prices, excluding freight. This is not profit.
+- **Monthly orders:** The number of distinct order IDs grouped by purchase month. All order statuses are included.
+- **Average delivery time:** The average time between purchase and actual delivery for delivered orders with valid timestamps.
+- **Late-delivery percentage:** The percentage of eligible delivered orders whose actual delivery was later than the estimated delivery date. Undelivered orders aren't counted as late.
 
 ## Example questions
 
-- “What are the top five product categories by item sales?”
-- “Which products have the highest item sales?”
-- “Show monthly order trends from 2017-01 to 2017-03”
-- “What was the late-delivery percentage?”
-- “Compare monthly order trends from 2017-01 to 2017-03 and delivery performance”
+- What are the top five product categories by item sales?
+- Which products have the highest item sales?
+- Show monthly order trends from 2017-01 to 2017-03.
+- What was the late-delivery percentage?
+- Compare monthly order trends from 2017-01 to 2017-03 and delivery performance.
+
+The router recognizes specific query patterns, so some differently worded or ambiguous questions may not be supported.
+
+## Tech stack
+
+- Python 3.11
+- Streamlit
+- LangGraph
+- Pandas
+- `unittest`
+
+## Project structure
+
+```text
+Insight-Copilot/
+├── agent/
+│   ├── graph.py
+│   ├── nodes.py
+│   ├── router.py
+│   └── state.py
+├── data/
+│   └── olist/
+├── scripts/
+│   └── inspect_data.py
+├── tests/
+├── tools/
+│   ├── data_tool.py
+│   ├── trend_tool.py
+│   └── delivery_tool.py
+├── app.py
+├── requirements.txt
+└── README.md
+```
+
+## Running locally
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/shagunsrivastavaa/Insight-Copilot.git
+cd Insight-Copilot
+```
+
+### 2. Create and activate the environment
+
+```bash
+conda create -n insight-copilot python=3.11 -y
+conda activate insight-copilot
+```
+
+### 3. Install the dependencies
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+### 4. Start the app
+
+```bash
+streamlit run app.py
+```
+
+Streamlit will display a local URL where you can open the app in your browser.
+
+### Dataset
+
+The app uses four CSV files stored in `data/olist/`:
+
+- `olist_orders_dataset.csv`
+- `olist_order_items_dataset.csv`
+- `olist_products_dataset.csv`
+- `product_category_name_translation.csv`
+
+These files are included in the repository.
 
 ## Tests
 
-The project has 17 standard-library `unittest` test methods covering router choices and date ranges, tool execution with mocks, error/result preservation, synthesis summaries, and an unclear-query graph run. Run them from the project root:
+To run the tests, use:
 
-```powershell
+```bash
 python -m unittest discover -s tests -v
 ```
 
-Tool calls are mocked in execution tests, and synthesis tests use small in-memory results; tests do not need to read or modify the Olist CSV files.
+The project has 17 unit tests covering routing, date validation, tool execution, error handling, and answer synthesis. All 17 tests passed in my local run.
 
-## Known limitations
+## Limitations and what I'd improve
 
-- Routing uses deterministic keyword and regular-expression rules, not an LLM-based router. It supports the query patterns in `agent/router.py`; unfamiliar or ambiguous wording can produce a routing error.
-- The app has no LLM or API integration and does not persist chat history beyond the active Streamlit session.
-- Item sales value is a price sum that excludes freight; it is not profit. The dataset does not supply cost or margin calculations through the current tools.
-- The graph currently returns text and structured tool results; it does not generate charts, though the state type has an optional `chart_data` field.
-- No deployment setup or deployment status is provided by this project documentation.
+The app currently relies on keyword-based routing, so it can't understand every possible way a question might be phrased. It also doesn't carry conversational context from one question into the next graph run.
+
+If I continued working on it, I'd improve follow-up question handling, support more query patterns, and add features such as anomaly detection and more detailed comparisons between trends and delivery performance.
